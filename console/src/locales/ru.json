@@ -2322,9 +2322,12 @@
   },
   "market": {
     "searchPlaceholder": "Поиск навыков по платформам",
+    "categoryAll": "Все",
+    "searchResult": "Найдено навыков по запросу \"{{keyword}}\": {{count}}",
     "providerUnavailable": "Источник недоступен",
     "noResults": "Ничего не найдено",
     "startTyping": "Введите запрос выше, чтобы найти навык в маркете",
+    "browseHint": "Выберите категорию или введите ключевое слово, чтобы просмотреть навыки в {{providers}}",
     "noDescription": "Описание отсутствует",
     "targetPool": "Пул",
     "targetWorkspace": "Рабочее пространство",

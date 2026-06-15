@@ -2307,9 +2307,12 @@
   },
   "market": {
     "searchPlaceholder": "プラットフォームを横断してスキルを検索",
+    "categoryAll": "すべて",
+    "searchResult": "「{{keyword}}」に一致するスキルが {{count}} 件見つかりました",
     "providerUnavailable": "ソースが利用できません",
     "noResults": "結果が見つかりません",
     "startTyping": "上の検索ボックスにキーワードを入力してスキルを探します",
+    "browseHint": "{{providers}} のスキルを閲覧するには、カテゴリを選択するかキーワードを入力してください",
     "noDescription": "説明はありません",
     "targetPool": "プール",
     "targetWorkspace": "ワークスペース",

@@ -2346,9 +2346,12 @@
   },
   "market": {
     "searchPlaceholder": "Buscar habilidades em várias plataformas",
+    "categoryAll": "Todos",
+    "searchResult": "{{count}} habilidades encontradas para \"{{keyword}}\"",
     "providerUnavailable": "Provedor indisponível",
     "noResults": "Nenhum resultado",
     "startTyping": "Digite uma consulta acima para buscar no mercado",
+    "browseHint": "Escolha uma categoria ou digite uma palavra-chave para navegar pelos skills em {{providers}}",
     "noDescription": "Nenhuma descrição fornecida",
     "targetPool": "Pool",
     "targetWorkspace": "Workspace",
