@@ -1805,7 +1805,14 @@
       "title": "Novo Versao available: v{{version}}",
       "viewReleases": "Visualizar Releases",
       "close": "Fechar"
-    }
+    },
+    "settings": {
+      "language": "Idioma",
+      "theme": "Tema",
+      "mode": "Modo"
+    },
+    "simpleMode": "Modo simples",
+    "fullMode": "Modo completo"
   },
   "chat": {
     "modelSelectTooltip": "Selecionar Modelo",
@@ -1900,6 +1907,19 @@
       "pin": "Pin",
       "unpin": "Unpin",
       "delete": "Excluir"
+    },
+    "conversationHistory": "Histórico de conversas",
+    "group": {
+      "pinned": "Fixados",
+      "today": "Hoje",
+      "week": "Últimos 7 dias",
+      "month": "Últimos 30 dias",
+      "older": "Anteriores"
+    },
+    "sessionPanel": {
+      "searchConversations": "Pesquisar…",
+      "noConversations": "Sem conversas",
+      "loadingConversations": "Carregando…"
     }
   },
   "security": {
