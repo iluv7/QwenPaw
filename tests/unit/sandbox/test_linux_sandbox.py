@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import MagicMock, mock_open, patch
+
+import pytest
 
 from qwenpaw.sandbox import (
     MountSpec,
@@ -17,6 +20,15 @@ from qwenpaw.sandbox.config import (
     _probe_linux_landlock,
     _probe_macos_seatbelt,
     detect_platform_mode,
+)
+
+# os.uname is Linux/macOS only; skip entirely on Windows.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "Linux sandbox tests require os.uname"
+        " which is unavailable on Windows"
+    ),
 )
 
 # ============================================================================

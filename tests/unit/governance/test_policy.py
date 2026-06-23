@@ -425,7 +425,9 @@ class TestFileTargetResolution:
 
         target = "src/main.py"
         resolved = os.path.normpath(os.path.join(ws, target))
-        assert resolved == os.path.join(ws, target)
+        # normpath normalizes separators (e.g. / -> \ on Windows),
+        # so compare with normpath on both sides.
+        assert resolved == os.path.normpath(os.path.join(ws, target))
         assert os.path.isabs(resolved)
 
     def test_absolute_path_unchanged(self):
