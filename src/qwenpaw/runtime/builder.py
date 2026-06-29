@@ -755,6 +755,20 @@ class AgentBuilder:
                 exc_info=True,
             )
 
+        # Langfuse tool observability
+        try:
+            from ..observability.langfuse import is_langfuse_enabled
+
+            if is_langfuse_enabled():
+                from ..agents.middlewares import LangfuseToolSpanMiddleware
+
+                mws.append(LangfuseToolSpanMiddleware())
+        except Exception:
+            _logger.debug(
+                "LangfuseToolSpanMiddleware not created",
+                exc_info=True,
+            )
+
         return mws
 
 
