@@ -52,6 +52,32 @@ def _tool_chunk(text: str, *, ok: bool = True) -> ToolChunk:
     )
 
 
+def _build_search_answer(candidates: list[dict]) -> str:
+    """Format re-ranked candidates as a ReMe-style search answer string.
+
+    Produces the same format as ReMe's ``SearchStep._format_scores``::
+
+        ========== path:start-end [score=... rerank=...] ==========
+        text content...
+    """
+    lines: list[str] = []
+    for c in candidates:
+        scores: dict[str, float] = c.get("scores", {})
+        score_parts = [f"score={scores.get('score', 0.0):.4f}"]
+        for key in ("vector", "keyword", "rerank"):
+            val = scores.get(key)
+            score_parts.append(
+                f"{key}={val:.4f}" if val is not None else f"{key}=-",
+            )
+        header = (
+            f"========== {c['path']}:{c['start_line']}-{c['end_line']}"
+            f" [{' '.join(score_parts)}] =========="
+        )
+        lines.append(header)
+        lines.append(c["text"])
+    return "\n".join(lines)
+
+
 @memory_registry.register("remelight")
 class ReMeLightMemoryManager(BaseMemoryManager):
     """Memory manager backed by ReMe.
@@ -197,6 +223,103 @@ class ReMeLightMemoryManager(BaseMemoryManager):
             logger.exception("ReMe job failed: %s", name)
             return None
 
+    # pylint: disable=too-many-return-statements
+    async def _rerank_dashscope(
+        self,
+        query: str,
+        candidates: list[dict],
+        top_n: int,
+    ) -> list[dict]:
+        """Re-rank candidates using DashScope re-rank API.
+
+        Returns *top_n* candidates ordered by ``relevance_score`` descending,
+        with ``"rerank"`` merged into each candidate's ``scores`` dict.
+
+        On any error the original *candidates* (truncated to *top_n*) are
+        returned so the caller always progresses.
+        """
+        if not candidates:
+            return candidates
+
+        try:
+            import dashscope
+        except ImportError:
+            logger.warning("dashscope not installed; skipping rerank")
+            return candidates[:top_n]
+
+        try:
+            agent_config = load_agent_config(self.agent_id)
+            memory_cfg = agent_config.running.reme_light_memory_config
+        except Exception:
+            memory_cfg = None
+        rerank_model = (
+            getattr(memory_cfg, "rerank_model", "qwen3-rerank")
+            or "qwen3-rerank"
+        )
+
+        api_key = getattr(memory_cfg, "dashscope_api_key", "") or ""
+        if not api_key:
+            logger.warning("dashscope_api_key not configured; skipping rerank")
+            return candidates[:top_n]
+
+        texts = [c.get("text", "") for c in candidates]
+
+        try:
+            resp = dashscope.TextReRank.call(
+                model=rerank_model,
+                query=query,
+                documents=texts,
+                top_n=top_n,
+                return_documents=False,
+                api_key=api_key,
+            )
+        except Exception:
+            logger.exception("dashscope rerank call failed")
+            return candidates[:top_n]
+
+        if resp.status_code != 200:
+            logger.warning(
+                "dashscope rerank returned %s: %s",
+                resp.status_code,
+                getattr(resp, "message", ""),
+            )
+            return candidates[:top_n]
+
+        output = getattr(resp, "output", None)
+        if output is None or not hasattr(output, "results"):
+            logger.warning("dashscope rerank response missing output.results")
+            return candidates[:top_n]
+
+        result: list[dict] = []
+        for item in output.results:
+            idx = (
+                item.get("index")
+                if isinstance(item, dict)
+                else getattr(item, "index", None)
+            )
+            score = (
+                item.get("relevance_score")
+                if isinstance(item, dict)
+                else getattr(item, "relevance_score", None)
+            )
+            if idx is None or idx >= len(candidates):
+                continue
+            c = dict(candidates[idx])
+            c["scores"] = {
+                **(c.get("scores") or {}),
+                "rerank": float(score) if score is not None else 0.0,
+            }
+            result.append(c)
+
+        if not result:
+            logger.warning(
+                "dashscope rerank returned empty results;"
+                " using original order",
+            )
+            return candidates[:top_n]
+
+        return result
+
     def _install_reme_result_hook(self) -> None:
         """Expose QwenPaw inbox delivery to ReMe background steps."""
         if self._reme is None:
@@ -293,9 +416,11 @@ class ReMeLightMemoryManager(BaseMemoryManager):
                 name,
                 event.get("id"),
                 event.get("status"),
-                response_metadata.get("modified")
-                if isinstance(response_metadata, dict)
-                else None,
+                (
+                    response_metadata.get("modified")
+                    if isinstance(response_metadata, dict)
+                    else None
+                ),
             )
             return True
         except Exception:  # pylint: disable=broad-except
@@ -358,18 +483,42 @@ class ReMeLightMemoryManager(BaseMemoryManager):
         if not query:
             return _tool_chunk("Error: query cannot be empty", ok=False)
 
+        agent_config = load_agent_config(self.agent_id)
+        memory_cfg = agent_config.running.reme_light_memory_config
+        rerank = memory_cfg.rerank_enabled
+        fetch_limit = (
+            max(1, max_results * 3) if rerank else max(1, max_results)
+        )
+
         response = await self._run_reme_job(
             "search",
             query=query,
-            limit=max(1, max_results),
+            limit=fetch_limit,
             min_score=max(0.0, min_score),
         )
         if response is None:
             return _tool_chunk("ReMe is not started.", ok=False)
 
-        answer = str(response.answer or "").strip()
-        if not answer:
-            answer = NO_MEMORY_RESULTS
+        if rerank and response.success:
+            candidates = response.metadata.get("results", [])
+            if not candidates:
+                answer = (
+                    str(response.answer or "").strip() or NO_MEMORY_RESULTS
+                )
+            else:
+                if len(candidates) > max_results:
+                    candidates = await self._rerank_dashscope(
+                        query,
+                        candidates,
+                        max_results,
+                    )
+                answer = _build_search_answer(candidates[:max_results])
+                if not answer.strip():
+                    answer = NO_MEMORY_RESULTS
+        else:
+            answer = str(response.answer or "").strip()
+            if not answer:
+                answer = NO_MEMORY_RESULTS
         return _tool_chunk(answer, ok=response.success)
 
     async def summarize(
@@ -392,6 +541,7 @@ class ReMeLightMemoryManager(BaseMemoryManager):
             return ""
         return str(response.answer or "")
 
+    # pylint: disable=too-many-return-statements
     async def auto_memory_search(
         self,
         messages: list[Msg] | Msg,
@@ -411,19 +561,44 @@ class ReMeLightMemoryManager(BaseMemoryManager):
             return None
 
         search_cfg = memory_cfg.auto_memory_search_config
+        rerank = memory_cfg.rerank_enabled
+        fetch_limit = (
+            max(1, search_cfg.max_results * 3)
+            if rerank
+            else max(1, search_cfg.max_results)
+        )
 
         response = await self._run_reme_job(
             "search",
             query=query,
-            limit=max(1, search_cfg.max_results),
+            limit=fetch_limit,
             min_score=0,
         )
         if response is None or not response.success:
             return None
 
-        text = str(response.answer or "").strip()
-        if not text:
-            return None
+        if rerank:
+            candidates = response.metadata.get("results", [])
+            if not candidates:
+                text = str(response.answer or "").strip()
+                if not text:
+                    return None
+            else:
+                if len(candidates) > search_cfg.max_results:
+                    candidates = await self._rerank_dashscope(
+                        query,
+                        candidates,
+                        search_cfg.max_results,
+                    )
+                text = _build_search_answer(
+                    candidates[: search_cfg.max_results],
+                )
+                if not text.strip():
+                    return None
+        else:
+            text = str(response.answer or "").strip()
+            if not text:
+                return None
 
         tool_call_id = uuid.uuid4().hex
         tool_input = {

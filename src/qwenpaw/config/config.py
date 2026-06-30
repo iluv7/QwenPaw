@@ -742,6 +742,29 @@ class ReMeLightMemoryConfig(BaseModel):
         ),
     )
 
+    rerank_enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether to re-rank memory search results with a re-rank model."
+            " When True, ReMe fetches more candidates (max_results * 3) and"
+            " the re-rank model re-orders them by relevance to the query."
+            " Defaults to False so existing users are unaffected."
+        ),
+    )
+
+    rerank_model: str = Field(
+        default="qwen3-rerank",
+        description="Re-rank model identifier (e.g., qwen3-rerank).",
+    )
+
+    dashscope_api_key: str = Field(
+        default="",
+        description=(
+            "DashScope API key for the re-rank model. If empty, falls back to"
+            " the DASHSCOPE_API_KEY environment variable."
+        ),
+    )
+
 
 class ContextCompactConfig(BaseModel):
     """Context compaction configuration."""
