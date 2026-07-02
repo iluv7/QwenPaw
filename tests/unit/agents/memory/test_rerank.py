@@ -12,20 +12,17 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 AGENT_ID = "test-agent"
-REAL_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
+RERANK_URL = "https://api.siliconflow.cn/v1/rerank"
+REAL_API_KEY = os.environ.get("RERANK_TEST_API_KEY", "")
 
 
 def _real_rerank_available() -> bool:
-    try:
-        __import__("dashscope")
-    except ImportError:
-        return False
     return bool(REAL_API_KEY)
 
 
 rerank_api = pytest.mark.skipif(
     not _real_rerank_available(),
-    reason="DASHSCOPE_API_KEY not set or dashscope not installed",
+    reason="RERANK_TEST_API_KEY not set",
 )
 
 
@@ -43,8 +40,9 @@ def mock_agent_config_real_key():
 
     memory_cfg = ReMeLightMemoryConfig(
         rerank_enabled=True,
-        rerank_model="qwen3-rerank",
-        dashscope_api_key=REAL_API_KEY,
+        rerank_model="BAAI/bge-reranker-v2-m3",
+        api_key=REAL_API_KEY,
+        rerank_base_url=RERANK_URL,
         auto_memory_search_config=AutoMemorySearchConfig(
             enabled=True,
             max_results=3,
@@ -80,6 +78,28 @@ def _create_manager(tmp_path, agent_config, monkeypatch):
     )
 
 
+_SIX_RESULTS = [
+    {
+        "path": f"memory/test{i}.md",
+        "start_line": 1,
+        "end_line": 3,
+        "text": t,
+        "scores": {"score": s, "vector": s - 0.02, "keyword": s + 0.05},
+    }
+    for i, (t, s) in enumerate(
+        [
+            ("重排序模型广泛应用于搜索引擎", 0.85),
+            ("量子计算是计算科学的前沿领域", 0.72),
+            ("预训练语言模型带来了新进展", 0.65),
+            ("今天天气很好适合出去玩", 0.30),
+            ("Python 是最流行的编程语言", 0.25),
+            ("红楼梦是中国古典名著", 0.20),
+        ],
+        start=1,
+    )
+]
+
+
 @pytest.fixture
 def manager_with_reme(mock_agent_config_real_key, tmp_path, monkeypatch):
     mgr = _create_manager(tmp_path, mock_agent_config_real_key, monkeypatch)
@@ -96,43 +116,7 @@ def _wire_reme(mgr):
         return_value=Response(
             success=True,
             answer="dummy raw answer",
-            metadata={
-                "results": [
-                    {
-                        "path": "memory/a.md",
-                        "start_line": 1,
-                        "end_line": 2,
-                        "text": "aaa",
-                        "scores": {
-                            "score": 0.9,
-                            "vector": 0.88,
-                            "keyword": 0.92,
-                        },
-                    },
-                    {
-                        "path": "memory/b.md",
-                        "start_line": 1,
-                        "end_line": 2,
-                        "text": "bbb",
-                        "scores": {
-                            "score": 0.7,
-                            "vector": 0.65,
-                            "keyword": 0.75,
-                        },
-                    },
-                    {
-                        "path": "memory/c.md",
-                        "start_line": 1,
-                        "end_line": 2,
-                        "text": "ccc",
-                        "scores": {
-                            "score": 0.5,
-                            "vector": 0.48,
-                            "keyword": 0.52,
-                        },
-                    },
-                ],
-            },
+            metadata={"results": _SIX_RESULTS},
         ),
     )
 
@@ -152,11 +136,9 @@ _SAMPLE_CANDIDATES: list[dict[str, Any]] = [
 
 class TestBuildSearchAnswer:
     def test_formats_candidates_in_reme_style(self):
-        from qwenpaw.agents.memory.reme_light_memory_manager import (
-            _build_search_answer,
-        )
+        from qwenpaw.agents.memory.reranker import build_search_answer
 
-        answer = _build_search_answer(_SAMPLE_CANDIDATES)
+        answer = build_search_answer(_SAMPLE_CANDIDATES)
         assert "==========" in answer
         assert "score=0.8534" in answer
         assert "用户喜欢吃川菜" in answer
@@ -167,7 +149,7 @@ class TestBuildSearchAnswer:
 
 class TestConfigReading:
     def test_load_agent_config_end_to_end(self, tmp_path, monkeypatch):
-        """端到端：写真实 config.json + agent.json，调真正的 load_agent_config。"""
+        """端到端：写真实文件，调真正的 load_agent_config。"""
         import json
         import qwenpaw.config.config as cfg
         from qwenpaw.config import utils as cfg_utils
@@ -195,8 +177,9 @@ class TestConfigReading:
                     "running": {
                         "reme_light_memory_config": {
                             "rerank_enabled": True,
-                            "rerank_model": "qwen3-rerank",
-                            "dashscope_api_key": "sk-e2e-test",
+                            "rerank_model": "BAAI/bge-reranker-v2-m3",
+                            "api_key": "sk-e2e-test",
+                            "rerank_base_url": RERANK_URL,
                         },
                     },
                 },
@@ -212,8 +195,9 @@ class TestConfigReading:
         agent_config = cfg.load_agent_config(AGENT_ID)
         memory_cfg = agent_config.running.reme_light_memory_config
         assert memory_cfg.rerank_enabled is True
-        assert memory_cfg.rerank_model == "qwen3-rerank"
-        assert memory_cfg.dashscope_api_key == "sk-e2e-test"
+        assert memory_cfg.rerank_model == "BAAI/bge-reranker-v2-m3"
+        assert memory_cfg.api_key == "sk-e2e-test"
+        assert memory_cfg.rerank_base_url == RERANK_URL
 
     def test_rerank_disabled_by_default(self):
         from qwenpaw.config.config import ReMeLightMemoryConfig
@@ -222,7 +206,7 @@ class TestConfigReading:
         assert cfg.rerank_enabled is False
 
 
-# -- _rerank_dashscope real-API -----------------------------------------
+# -- rerank() real-API --------------------------------------------------
 
 REAL_CANDIDATES: list[dict[str, Any]] = [
     {
@@ -249,23 +233,18 @@ REAL_CANDIDATES: list[dict[str, Any]] = [
 ]
 
 
-class TestRerankDashScope:
+class TestRerank:
     @rerank_api
     @pytest.mark.asyncio
-    async def test_returns_top_n_results(
-        self,
-        mock_agent_config_real_key,
-        tmp_path,
-        monkeypatch,
-    ):
-        mgr = _create_manager(
-            tmp_path,
-            mock_agent_config_real_key,
-            monkeypatch,
-        )
-        result = await mgr._rerank_dashscope(
+    async def test_returns_top_n_results(self):
+        from qwenpaw.agents.memory.reranker import rerank
+
+        result = await rerank(
             query="什么是重排序模型",
             candidates=REAL_CANDIDATES,
+            api_key=REAL_API_KEY,
+            base_url=RERANK_URL,
+            model_name="BAAI/bge-reranker-v2-m3",
             top_n=2,
         )
         assert len(result) == 2
@@ -274,20 +253,15 @@ class TestRerankDashScope:
 
     @rerank_api
     @pytest.mark.asyncio
-    async def test_relevant_doc_ranks_higher(
-        self,
-        mock_agent_config_real_key,
-        tmp_path,
-        monkeypatch,
-    ):
-        mgr = _create_manager(
-            tmp_path,
-            mock_agent_config_real_key,
-            monkeypatch,
-        )
-        result = await mgr._rerank_dashscope(
+    async def test_relevant_doc_ranks_higher(self):
+        from qwenpaw.agents.memory.reranker import rerank
+
+        result = await rerank(
             query="什么是重排序模型",
             candidates=REAL_CANDIDATES,
+            api_key=REAL_API_KEY,
+            base_url=RERANK_URL,
+            model_name="BAAI/bge-reranker-v2-m3",
             top_n=3,
         )
         texts = [c["text"] for c in result]
@@ -298,32 +272,19 @@ class TestRerankDashScope:
         ), f"rerank-related doc should rank above quantum, got: {texts}"
 
     @pytest.mark.asyncio
-    async def test_no_api_key_falls_back(self, tmp_path, monkeypatch):
-        from qwenpaw.config.config import (
-            AgentProfileConfig,
-            AgentsRunningConfig,
-            ReMeLightMemoryConfig,
-        )
+    async def test_no_api_key_falls_back(self):
+        from qwenpaw.agents.memory.reranker import rerank
 
-        memory_cfg = ReMeLightMemoryConfig(
-            rerank_enabled=True,
-            dashscope_api_key="",
-        )
-        agent_config = AgentProfileConfig(
-            id=AGENT_ID,
-            name="TestAgent",
-            description="",
-            workspace_dir="/tmp/test-ws",
-            running=AgentsRunningConfig(reme_light_memory_config=memory_cfg),
-        )
-        mgr = _create_manager(tmp_path, agent_config, monkeypatch)
-        result = await mgr._rerank_dashscope(
+        result = await rerank(
             query="test",
             candidates=REAL_CANDIDATES,
+            api_key="",
+            base_url=RERANK_URL,
+            model_name="BAAI/bge-reranker-v2-m3",
             top_n=2,
         )
         assert len(result) == 2
-        assert "搜索引擎" in result[0]["text"]  # original order preserved
+        assert "搜索引擎" in result[0]["text"]
 
 
 # -- memory_search integration ------------------------------------------
@@ -368,13 +329,14 @@ class TestMemorySearch:
             agent_id=AGENT_ID,
         )
         _wire_reme(mgr)
-
         chunk = await mgr.memory_search("test")
         assert "dummy raw answer" in str(chunk.content[0].text)
 
-    @rerank_api
     @pytest.mark.asyncio
-    async def test_rerank_enabled_uses_larger_limit(self, manager_with_reme):
+    async def test_rerank_enabled_uses_larger_limit(
+        self,
+        manager_with_reme,
+    ):
         await manager_with_reme.memory_search("test", max_results=3)
         _, kwargs = manager_with_reme._reme.run_job.call_args
         assert kwargs["limit"] == 9  # 3 * 3
@@ -385,14 +347,15 @@ class TestMemorySearch:
         self,
         manager_with_reme,
     ):
-        chunk = await manager_with_reme.memory_search("aaa", max_results=2)
+        chunk = await manager_with_reme.memory_search("重排序", max_results=3)
         assert "rerank=" in str(chunk.content[0].text)
 
     @rerank_api
     @pytest.mark.asyncio
-    async def test_rerank_reorders_results(self, manager_with_reme):
-        chunk = await manager_with_reme.memory_search("ccc", max_results=2)
+    async def test_rerank_reorders_results(
+        self,
+        manager_with_reme,
+    ):
+        chunk = await manager_with_reme.memory_search("经典名著", max_results=3)
         text = str(chunk.content[0].text)
-        assert text.index("ccc") < text.index(
-            "aaa",
-        ), f"ccc should be before aaa, got:\n{text}"
+        assert "红楼梦" in text, f"红楼梦 should appear, got:\n{text}"

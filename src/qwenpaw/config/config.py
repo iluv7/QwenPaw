@@ -754,14 +754,21 @@ class ReMeLightMemoryConfig(BaseModel):
 
     rerank_model: str = Field(
         default="qwen3-rerank",
-        description="Re-rank model identifier (e.g., qwen3-rerank).",
+        description="Re-rank model identifier (e.g., qwen3-rerank,"
+        " bge-reranker-v2-m3).",
     )
 
-    dashscope_api_key: str = Field(
+    api_key: str = Field(
+        default="",
+        description="API key for the reranker provider.",
+    )
+
+    rerank_base_url: str = Field(
         default="",
         description=(
-            "DashScope API key for the re-rank model. If empty, falls back to"
-            " the DASHSCOPE_API_KEY environment variable."
+            "Full URL for the rerank API endpoint."
+            " E.g., https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
+            " or https://api.siliconflow.cn/v1/rerank."
         ),
     )
 
